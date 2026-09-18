@@ -66,6 +66,7 @@ from merken.policies.should_remember import (
     ShadowWriteDecider,
 )
 from merken.policies.types import Decision, Event, WriteContext, WriteDecider
+from merken.reranking import Reranker
 from merken.sourcing import is_safely_mutable
 
 if TYPE_CHECKING:
@@ -232,11 +233,18 @@ class Memory:
         forget_decider: ForgetDecider | None = None,
         midloop_decider: MidloopDecider | None = None,
         temporal_weight: float = 0.0,
+        reranker: Reranker | None = None,
+        recall_overfetch: int = 4,
         trajectory_window: int = 20,
     ) -> None:
         self.project = project
         self.collection = collection
         self._temporal_weight = temporal_weight
+        # Optional post-retrieval reranker (``merken.reranking.Reranker``).
+        # When set, ``recall`` over-fetches ``top_k * recall_overfetch``
+        # candidates from every layer before reranking. None = off.
+        self._reranker = reranker
+        self._recall_overfetch = max(1, recall_overfetch)
         self._vstash = vstash.Memory(
             config=config,
             project=project,
@@ -380,7 +388,26 @@ class Memory:
 
         ctx = RecallContext(project=self.project, top_k=top_k)
         plan = self._recall_decider.decide(query, ctx)
-        self._write_recall_audit(query, plan)
+
+        # Over-fetch budget. Any reranker (recency or a ``Reranker``)
+        # needs more candidates than the caller's top_k to reorder
+        # meaningfully. Before 2026-09 this only widened the *merge*
+        # limit while each layer kept fetching its fixed plan budget
+        # (5 + 3 by default), so rerankers only ever saw 8 candidates
+        # regardless of top_k. The per-layer fetch below now honours
+        # the over-fetch limit too.
+        tw = temporal_weight if temporal_weight is not None else self._temporal_weight
+        if self._reranker is not None:
+            fetch_limit = top_k * self._recall_overfetch
+        elif tw > 0.0:
+            fetch_limit = top_k * 2
+        else:
+            fetch_limit = top_k
+        reranker_name = (
+            self._reranker.name if self._reranker is not None
+            else ("rerank_by_recency" if tw > 0.0 else None)
+        )
+        self._write_recall_audit(query, plan, reranker=reranker_name)
 
         # Fetch from every layer first, then interleave round-robin.
         # The earlier implementation drained each layer sequentially,
@@ -405,6 +432,8 @@ class Memory:
             # layer (no consolidation) wastes its budget and the
             # episodic layer only fetches its own smaller quota.
             effective_top_k = req.top_k + empty_budget
+            if fetch_limit > top_k:
+                effective_top_k = max(effective_top_k, fetch_limit)
             layer_hits = self._vstash.search(
                 query,
                 top_k=effective_top_k,
@@ -420,10 +449,6 @@ class Memory:
 
         seen_paths: set[str] = set()
         merged: list[SearchResult] = []
-        # Over-fetch when temporal reranking is active so the reranker
-        # has enough candidates to reorder meaningfully.
-        tw = temporal_weight if temporal_weight is not None else self._temporal_weight
-        fetch_limit = top_k * 2 if tw > 0.0 else top_k
         max_len = max((len(hs) for hs in per_layer_hits), default=0)
         for i in range(max_len):
             for layer_hits in per_layer_hits:
@@ -445,6 +470,9 @@ class Memory:
             from merken.reranking import rerank_by_recency
 
             merged = rerank_by_recency(merged, temporal_weight=tw)
+
+        if self._reranker is not None and merged:
+            merged = list(self._reranker.rerank(query, merged))
 
         return merged[:top_k]
 
@@ -508,6 +536,7 @@ class Memory:
         jaccard_threshold: float = 0.5,
         force: bool = False,
         synthesize_fn: Any | None = None,
+        materialize_fn: Any | None = None,
     ) -> ConsolidationResult:
         """Cluster episodic events into semantic facts. Phase 2, no LLM.
 
@@ -557,6 +586,12 @@ class Memory:
         force:
             Bypass the ``should_consolidate`` decider and always run.
             Useful in tests and when the caller has already decided.
+        materialize_fn:
+            Optional ``cluster -> Fact`` callable that takes full control
+            of materialization: the fact text *and* its ``derived_from``.
+            Use it when the materializer must expel cluster members
+            (e.g. ``merken.classifiers.jev.JevMaterializer``). Takes
+            precedence over ``synthesize_fn``.
         """
         docs = self._vstash.list(
             collection=self.collection,
@@ -727,7 +762,12 @@ class Memory:
         for cluster in clusters:
             if len(cluster) < min_cluster:
                 continue
-            if synthesize_fn is not None:
+            if materialize_fn is not None:
+                # Full control over the fact: text AND provenance. A
+                # materializer may expel cluster members it decides do
+                # not belong (see ``merken.classifiers.jev.JevMaterializer``).
+                fact = materialize_fn(cluster)
+            elif synthesize_fn is not None:
                 from merken.consolidation import materialize_fact_llm
                 fact = materialize_fact_llm(cluster, synthesize_fn)
             else:
@@ -1130,9 +1170,11 @@ class Memory:
         except Exception:
             pass
 
-    def _write_recall_audit(self, query: str, plan: RecallPlan) -> None:
+    def _write_recall_audit(
+        self, query: str, plan: RecallPlan, reranker: str | None = None
+    ) -> None:
         """Audit one ``should_recall`` decision. Fail-open."""
-        title, body = format_recall_audit_row(query, plan)
+        title, body = format_recall_audit_row(query, plan, reranker=reranker)
         try:
             self._vstash.remember(
                 body,
