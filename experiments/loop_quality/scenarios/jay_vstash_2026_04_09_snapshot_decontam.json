@@ -1,6 +1,6 @@
 {
   "name": "jay_vstash_2026_04_09_snapshot_decontam",
-  "description": "DECONTAMINATED subset of jay_vstash_2026_04_09_snapshot. Original had 20 events; 13 of them were also in a training source loaded by prepare.py. Kept 7 non-contaminated events for honest held-out evaluation. Derived by experiments/contamination_audit.py.",
+  "description": "DECONTAMINATED subset of jay_vstash_2026_04_09_snapshot. Original had 20 events; 13 of them were also in a training source loaded by prepare.py. Kept 7 non-contaminated events for honest held-out evaluation. Derived by experiments/contamination_audit.py. Queries whose topic has no surviving events after decontamination (kafka_meeting, merken_design) were removed on 2026-09-18: they could never pass.",
   "events": [
     {
       "id": "2026-04-07__vstash_debug_playbook_docume",
@@ -39,18 +39,6 @@
     }
   ],
   "queries": [
-    {
-      "question": "what happened in the Kafka merchant pipeline meeting?",
-      "expect_topic": "kafka_meeting",
-      "expect_contains": [
-        "Kafka"
-      ]
-    },
-    {
-      "question": "what are the merken architecture decisions and v0.1 ideas?",
-      "expect_topic": "merken_design",
-      "expect_contains": []
-    },
     {
       "question": "which MedLocal clinical case demos were prepared?",
       "expect_topic": "medlocal_clinical",

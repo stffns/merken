@@ -632,6 +632,45 @@ param to `Memory.forget` in merken core instead. But as a
 workaround for a specific user's decider, the pattern works
 and keeps the core `ForgetContext` model clean.
 
+## 5. Plug a reranker into `recall`, or a materializer into `consolidate`
+
+Two more hooks landed 2026-09-18. Neither is a decision primitive
+(four is enough — CLAUDE.md "What's NOT next"); they let a decider
+act *inside* recall and consolidation without touching `Memory`.
+
+### `Reranker` — reorder recall candidates
+
+```python
+# merken/reranking.py
+class Reranker(Protocol):
+    name: str
+    def rerank(self, query: str, hits: list[SearchResult]) -> list[SearchResult]: ...
+```
+
+Pass it as `Memory(reranker=my_reranker, recall_overfetch=4)`. With a
+reranker set, every layer in the `RecallPlan` fetches
+`top_k * recall_overfetch` candidates, the reranker sees the merged,
+deduped list, and its ordering (it may also drop hits) is truncated to
+the caller's `top_k`. The recall audit row records `reranker: <name>`.
+Explicit `layer=` calls bypass it. Return the hits unchanged on any
+internal error — never lose a retrieval result to a reranker bug.
+
+### `materialize_fn` — decide what a semantic fact *is*
+
+`Memory.consolidate(materialize_fn=fn)` where `fn(cluster) -> Fact` and
+`cluster` is `list[(doc_path, text)]`. Unlike `synthesize_fn` (text
+only), the materializer controls `derived_from` too, so it can expel
+members that do not belong in the fact's provenance. Return
+`merken.consolidation.materialize_fact(cluster)` as your fallback.
+
+### Reference implementation
+
+`merken.classifiers.jev` ships one of each on TypeSafe's Jev
+(network, opt-in): `JevReranker` and `JevMaterializer`, plus a
+`JevWriteDecider`. `experiments/loop_quality/jev_probe.py` is the
+ablation that justified them; `experiments/loop_quality/RESULTS.md`
+has the numbers.
+
 ## Per-decider state management
 
 Different primitives have different state needs. Here's the
