@@ -587,3 +587,106 @@ Same as the rest of the repo:
   code, not the benchmark.
 - A result worse than the previous one is not embarrassing, it is
   information. We keep both rows and figure out what regressed.
+
+## Jev at the three decision points (2026-09-18, `3953c818` + feature/jev-deciders)
+
+Driver: `experiments/loop_quality/jev_probe.py`. Model: TypeSafe
+`typesafe/jev-1.13-20260917` via OpenRouter's Decisions endpoint
+(`~typesafe/jev-latest`). Modes are cumulative: `write` =
+`ChainedWriteDecider(Heuristic -> JevWriteDecider)`; `+cons` =
+`JevMaterializer` as `materialize_fn` (fact text = the cluster member Jev
+picks as CURRENT; members kept in `derived_from` only if Jev says they are
+a version of the same decision AND labels them DECISION); `all` = `+
+JevReranker` on recall (over-fetch 4×, `noul` "answers the question?" ≥0.5,
+`choice` "which is current?" first). Every Jev response is cached under
+`.jev_cache/`; the whole table cost **$0.021** (~2.9k calls, ~500k
+input tokens) and reruns are free.
+
+`strict` is the runner's `query_pass_rate`; `hit@1` counts queries whose
+*first* hit is the answer (what an agent that reads one result gets).
+
+| Scenario | n_events | Mode | written (noise) | facts | purity | strict | hit@1 |
+|---|---|---|---|---|---|---|---|
+| knowledge_update_hard | 108 | baseline | 107 (95) | 12 | 92% | 4/4 | 3/4 |
+| | | all | 35 (23) | 7 | **100%** | 4/4 | **4/4** |
+| knowledge_update_20topics | 440 | baseline | 388 (328) | 58 | 93% | 15/20 = 75% | 7/20 |
+| | | write | 221 (161) | 40 | 90% | 14/20 | 8/20 |
+| | | write+cons | 221 (161) | 40 | 95% | 14/20 | 7/20 |
+| | | all | 221 (161) | 40 | 95% | **19/20 = 95%** | **18/20** |
+| knowledge_update_50topics | 1100 | baseline | 879 (729) | 117 | 91% | 26/50 = 52% | 13/50 |
+| | | write | 475 (326) | 83 | 88% | 27/50 | 17/50 |
+| | | write+cons | 475 (326) | 83 | **100%** | 26/50 | 18/50 |
+| | | all | 475 (326) | 83 | 100% | **33/50 = 66%** | **32/50** |
+| jay_vstash_2026_04_09_snapshot (organic) | 20 | baseline | 20 (0) | 3 | 0% | 3/4 = 75% | 0/4 |
+| | | all | 19 (0) | 3 | **100%** | **4/4 = 100%** | **3/4** |
+| jay_vstash_…_decontam (organic, 2 answerable queries) | 7 | baseline / all | 7 (0) | 2 | 100% | 2/2 | 2/2 |
+
+**Observations:**
+
+- The lift comes from the *combination*. `write` alone cleans (noise
+  written ÷2.2) but does not move pass rate; `+cons` alone purifies
+  (91% → 100%) but does not either; `+recall` is what turns both into
+  answers: hit@1 ×2.5 on 50topics, ×2.6 on 20topics.
+- **Remaining ceiling is retrieval, not decision.** On the 17 queries
+  that still fail in 50topics (`monitoring`, `ci`, `logging`, …) the
+  correct event ("Migrated from Prometheus/Thanos to Datadog…") is not
+  in vstash's top-40 for "what monitoring platform do we use?". A
+  reranker cannot reorder what the embedder never returns. That frontier
+  belongs to vstash (hybrid weights, bge fine-tune, query rewriting) —
+  see `experiments/retrieval/`.
+- **`materialize_fact` = longest text in the cluster** was the direct
+  cause of 16/24 baseline failures in 50topics: the topic *was* in the
+  top-5, as a stale version or a fact anchored on one. Picking the
+  current member fixes it; expelling operational tickets that merely
+  mention the same system (the adversarial noise in these scenarios) is
+  what takes purity to 100%.
+- Real content (`jay_vstash_2026_04_09_snapshot`): purity 0% → 100%,
+  hit@1 0 → 3/4. This is the "test fixtures are not ground truth" check
+  from CLAUDE.md, and it passes.
+- Jev-`all` (66%) sits between embedding_v1 (52%) and brief_v1 with LLM
+  synthesis (86%, `experiments/consolidation/RESULTS.md`) on 50topics —
+  with no text generation, no briefs, and no model training. The two are
+  composable (Jev can select which briefs to prepend); not measured here.
+- Two bugs surfaced by the probe, fixed in the same PR: (1)
+  `LayeredRecaller`'s fixed per-layer budgets ignored the over-fetch, so
+  every reranker — including `temporal_weight` — only ever saw 8
+  candidates; with the fix, `--temporal-weight 0.2` lifts
+  `jay_vstash_2026_04_09_snapshot` 75% → 100% (was a no-op). (2)
+  `jay_vstash_…_decontam` carried two queries (`kafka_meeting`,
+  `merken_design`) whose events the decontamination had removed; they
+  could never pass and were dropped.
+- Jev is a network decider (CONSTITUTION §4.1). Nothing here is on by
+  default: `MERKEN_SHADOW=jev` / `MERKEN_PRIMARY=jev`, or pass
+  `JevReranker` / `JevMaterializer` explicitly.
+
+## Temporal-weight grid, re-run after the recall over-fetch fix (2026-09-18)
+
+`experiments/loop_quality/temporal_grid.py`, `run_scenario` defaults
+(threshold 0.65, top_k 5). The previous grid (CLAUDE.md: "8 weights ×
+5 scenarios, zero regressions") ran while `Memory.recall` only ever
+handed the recency reranker 8 candidates; it is invalidated.
+
+```
+scenario                                  0.00   0.05   0.10   0.15   0.20   0.30   0.50   1.00
+-----------------------------------------------------------------------------------------------
+analytics_project                         100%   100%   100%   100%   100%   100%   100%   100%
+bilingual_es_en_2026_04_14                100%   100%   100%   100%   100%   100%   100%   100%
+disjoint_noise_heavy_holdout                0%     0%     0%     0%     0%     0%     0%     0%
+jay_vstash_2026_04_09_snapshot             75%   100%   100%   100%   100%   100%   100%   100%
+jay_vstash_2026_04_09_snapshot_decontam   100%   100%   100%   100%   100%   100%   100%   100%
+knowledge_update                          100%   100%   100%   100%   100%   100%   100%   100%
+knowledge_update_20topics                  60%    55%    55%    55%    55%    55%    55%    60%
+knowledge_update_50topics                  52%    50%    48%    48%    48%    48%    48%    44%
+knowledge_update_hard                     100%   100%   100%   100%   100%   100%   100%   100%
+markdown_tables_held_out                    0%     0%     0%     0%     0%     0%     0%     0%
+noisy_agent_stream                        100%   100%   100%   100%   100%   100%   100%   100%
+organic_val_held_out_topics                 0%     0%     0%     0%     0%     0%     0%     0%
+session_2026_04_09                        100%   100%   100%   100%   100%   100%   100%   100%
+```
+
+Rows at 0% are hold-out scenarios with no queries. The recency
+reranker can now help (`jay_vstash_2026_04_09_snapshot` 75% → 100% at
+any weight > 0) and hurt (`knowledge_update_20topics` 60% → 55%,
+`knowledge_update_50topics` 52% → 48%, 44% at 1.0). **Default stays
+`temporal_weight=0.0`.** Raising it is a new decision against this
+table.
