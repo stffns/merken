@@ -690,3 +690,68 @@ any weight > 0) and hurt (`knowledge_update_20topics` 60% → 55%,
 `knowledge_update_50topics` 52% → 48%, 44% at 1.0). **Default stays
 `temporal_weight=0.0`.** Raising it is a new decision against this
 table.
+
+## Retrieval ceiling, and the other half of the idea: writing (2026-09-19)
+
+Two probes on `knowledge_update_50topics` (1100 events, 950 noise, 50 queries).
+
+### `retrieval_ceiling.py` — where does the correct event sit in vstash's ranking?
+
+Episodic layer only, no consolidation, no reranker; rank of the *current*
+event per query under vstash's own knobs. Jev-filtered store (475 docs):
+
+| config | R@5 | R@20 | R@40 | R@100 | not in top-200 |
+|---|---|---|---|---|---|
+| hybrid (default), mmr 0.0 / 0.5 / 1.0 (identical) | 46% | 68% | 76% | 82% | 9 |
+| fts_only | 42% | 66% | 72% | 74% | 13 |
+| vec_only | 34% | 50% | 52% | 54% | 23 |
+| hybrid vec/fts 0.8/0.2 · 0.5/0.5 · 0.2/0.8 | 42–46% | 68–70% | 76% | 80–82% | 9 |
+| embedder swap: bge-base / bge-large / nomic (hybrid) | 44–48% | 70–74% | 72–78% | 78–84% | 8–11 |
+
+- `mmr_lambda` has no effect; `vec_only` is the worst mode; embedder
+  swaps move R@100 by ±2pp. **The retriever is not the lever.**
+- 3 of the 9 "never found" queries are scenario bugs: `access_control`,
+  `service_discovery`, `rate_limiting` have no event containing their
+  `expect_contains` (`OPA`, `Kubernetes DNS`, `Envoy rate limit`). The
+  answerable ceiling is 47/50.
+- The other 6 are a **vocabulary gap**: category-level queries ("what
+  monitoring platform do we use?") vs instance-level events ("Migrated
+  from Prometheus/Thanos to Datadog…"). Zero lexical overlap; bge-small
+  does not bridge it.
+- Consequence for the loop: the Jev reranker's ceiling is whatever
+  R@(top_k × overfetch) is. Raising `recall_overfetch` 4 → 8 → 20 on
+  the full Jev loop: 66% → 78% → **82%** strict (hit@1 32 → 37 → 38/50),
+  $0.016 per 50 queries at 100 candidates. 82% ≈ R@100: the loop sits
+  on the retrieval ceiling.
+
+### `write_enrich_probe.py` — merken writes the memory, not just filters it
+
+At write time, Jev decides which events are DECISION (415 of 1100; the
+LLM is only paid for signal) and a cheap LLM writes **one category-level
+line** stored with the event: `CI platform: Buildkite (replaced GitHub
+Actions)`. The LLM never sees a query. Then the full Jev loop runs
+(write + materializer + reranker, overfetch 20).
+
+| | R@5 | R@20 | R@100 | never found | strict | hit@1 | purity | LLM cost |
+|---|---|---|---|---|---|---|---|---|
+| Jev loop, no enrich | 46% | 68% | 82% | 9 | 41/50 = 82% | 38 | 100% | — |
+| + enrich `deepseek/deepseek-v4.1-flash` (reasoning off) | **78%** | **92%** | 94% | 3 | **46/50 = 92%** | 43 | 97% | $0.012 |
+| + enrich `openai/gpt-4.1-mini` | 76% | 90% | 94% | 3 | **47/50 = 94%** | 46 | 100% | $0.023 |
+
+- **47/47 answerable with gpt-4.1-mini; 46/47 with DeepSeek** (miss:
+  `graph_db`). Above brief_v1 (86%) without a brief layer: the line
+  lives with the event, so FTS, the embedder, consolidation and the
+  reranker all benefit.
+- Reasoning models return `content=None` under a small `max_tokens`
+  (DeepSeek v4.x, gpt-oss): pass OpenRouter's `reasoning: {enabled:
+  false}` or use a non-reasoning model. The first DeepSeek run silently
+  produced 351/353 empty lines and reproduced the no-enrich numbers
+  exactly — an empty enrichment is a no-op, not a regression.
+- Cost per enriched event ≈ $0.00003–0.00006; Jev's gate keeps the
+  LLM off the 685 noise events.
+
+**Reading:** yesterday's half (Jev deciding) took the loop from 52% to
+82% and hit the retriever's ceiling; today's half (merken *writing* a
+category-level line for what Jev keeps) lifts the ceiling itself. The
+combination is the thesis: merken is the layer that decides and writes;
+vstash stores and searches; an LLM drafts only when merken asks.
