@@ -278,3 +278,34 @@ def test_env_jev_shadow_annotates_only(monkeypatch, tmp_path) -> None:
     with Memory(project="t", db=tmp_path / "s.db") as mem:
         assert isinstance(mem._write_decider, ShadowWriteDecider)
         assert isinstance(mem._write_decider._shadow, JevWriteDecider)
+
+
+# ------------------------------------------------------ JevReranker: min_keep
+
+
+def test_reranker_min_keep_backfills_from_jev_order() -> None:
+    hits = [Hit("a"), Hit("b"), Hit("c"), Hit("d")]
+    scores = {"a": 0.1, "b": 0.9, "c": 0.3, "d": 0.2}
+    r = JevReranker(
+        JevClient(call_fn=_reranker_fake(scores, current="b")), min_keep=3
+    )
+    out = r.rerank("q", hits)
+    # b passes the filter; c and d are backfilled by score; a is dropped.
+    assert [h.text for h in out] == ["b", "c", "d"]
+
+
+def test_reranker_custom_current_instructions_are_used() -> None:
+    seen: list[str] = []
+
+    def call(body: dict[str, Any]) -> dict[str, Any]:
+        q = body["questions"]
+        if "answers" in q:
+            return {"answers": {"answers": {"type": "noul", "noul": 0.9}}}
+        seen.append(q["current"]["instructions"])
+        k = next(iter(q["current"]["criteria"]))
+        return {"answers": {"current": {"type": "choice", "choice": k,
+                                        "probabilities": {}, "confidence": 1.0}}}
+
+    r = JevReranker(JevClient(call_fn=call), current_instructions="AS OF DATE X: {query}")
+    r.rerank("what now?", [Hit("a"), Hit("b")])
+    assert seen == ["AS OF DATE X: what now?"]

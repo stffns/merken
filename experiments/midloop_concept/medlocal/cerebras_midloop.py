@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
 import time
@@ -47,7 +48,10 @@ from pathlib import Path
 # Models -- keep the asymmetry small-builder / big-judge to mirror
 # the production midloop topology (Builder is the runtime model,
 # Judge is the more capable sidecar).
-BUILDER = "llama3.1-8b"
+# llama3.1-8b was retired from Cerebras (404 as of 2026-09). gpt-oss-120b is
+# the canonical Builder since the 2026-04-27 3-seed runs (CHANGELOG); override
+# with MERKEN_LME_BUILDER to reproduce older rows.
+BUILDER = os.environ.get("MERKEN_LME_BUILDER", "gpt-oss-120b")
 JUDGE = "qwen-3-235b-a22b-instruct-2507"
 # Token budgets kept tight -- this pipeline is deliberately thrifty.
 # Draft caps where a clinical answer comfortably fits; Judge caps
@@ -737,9 +741,9 @@ def retrieve(
             # query when no newline is present.
             q_only = query.split("\n", 1)[0].strip() or query
             hybrid_hits = mem.search(query, top_k=top_k)
-            fts_hits = mem.search(query, top_k=fts_k, fts_only=True)
+            fts_hits = mem.search(query, top_k=fts_k, retrieval_mode="fts_only")
             fts_q_hits = (
-                mem.search(q_only, top_k=fts_k, fts_only=True)
+                mem.search(q_only, top_k=fts_k, retrieval_mode="fts_only")
                 if q_only != query
                 else []
             )

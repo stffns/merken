@@ -1,0 +1,7 @@
+# v2 of jev_recall: (1) never hand the Builder fewer than top_k excerpts
+# (min_keep) -- aggregation questions need partial answers; (2) Jev sees
+# the session date with each excerpt so "which is current" works on
+# chat logs where supersession is only in the timestamps.
+conditions:
+  - {name: rag_jev_v2_k5_pool5, kind: rag_jev, temperature: 0.0, top_k: 5, pool_k: 5,
+     min_keep: 5, retrieval_mode: dual, system_prompt: rag_baseline, cite_footer: true}

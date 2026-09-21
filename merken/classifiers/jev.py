@@ -254,12 +254,25 @@ class JevReranker:
         min_answer: float = 0.5,
         pick_current: bool = True,
         pick_from: int = 6,
+        min_keep: int = 0,
+        current_instructions: str | None = None,
         workers: int = 8,
     ) -> None:
         self._client = client or JevClient()
         self._min_answer = min_answer
         self._pick_current = pick_current
+        # ``{query}`` is substituted. Override when "current" is not simply
+        # "most recent" (e.g. questions that ask about an earlier time).
+        self._current_instructions = current_instructions or (
+            'Which text gives the CURRENT, most up-to-date answer to: "{query}"? '
+            "Prefer the one that supersedes the others."
+        )
         self._pick_from = pick_from
+        # Never return fewer than this many hits: after the answers-filter,
+        # backfill from Jev's ordering. Aggregation questions ("total I
+        # earned across sales") need several excerpts that each only
+        # *partially* answer; a strict filter starves the reader.
+        self._min_keep = min_keep
         self._workers = workers
 
     def rerank(self, query: str, hits: list[SearchResult]) -> list[SearchResult]:
@@ -286,6 +299,9 @@ class JevReranker:
         kept = [hits[i] for i in order if scores[i] >= self._min_answer]
         if not kept:
             return list(hits)
+        if len(kept) < self._min_keep:
+            extra = [hits[i] for i in order if scores[i] < self._min_answer]
+            kept = kept + extra[: self._min_keep - len(kept)]
         if self._pick_current and len(kept) >= 2:
             head = kept[: self._pick_from]
             keys = [f"h{i}" for i in range(len(head))]
@@ -294,10 +310,7 @@ class JevReranker:
                 {
                     "current": {
                         "type": "choice",
-                        "instructions": (
-                            f'Which text gives the CURRENT, most up-to-date answer to: "{query}"? '
-                            "Prefer the one that supersedes the others."
-                        ),
+                        "instructions": self._current_instructions.format(query=query),
                         "criteria": dict.fromkeys(keys),
                     }
                 },
