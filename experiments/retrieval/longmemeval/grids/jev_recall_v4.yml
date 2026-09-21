@@ -1,0 +1,10 @@
+# v4 = v3 conditions with max_tokens 1500. gpt-oss-120b is a reasoning model:
+# at MAX_TOKENS_DRAFT=300 it spends the whole budget thinking and returns
+# empty content (9/49 baseline answers, 5/49 Jev v3 answers in the earlier
+# grids were blank and scored as wrong). Same seed, same oracle.
+conditions:
+  - {name: rag_t00_k5_mt1500,        kind: rag,     temperature: 0.0, top_k: 5, max_tokens: 1500,
+     retrieval_mode: dual, system_prompt: rag_baseline, cite_footer: true}
+  - {name: rag_jev_v3_k5_pool5_mt1500, kind: rag_jev, temperature: 0.0, top_k: 5, pool_k: 5,
+     min_keep: 5, time_aware: true, max_tokens: 1500, retrieval_mode: dual,
+     system_prompt: rag_baseline, cite_footer: true}

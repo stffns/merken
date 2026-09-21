@@ -46,6 +46,9 @@ Supported backends (shared between SHADOW and PRIMARY):
 - ``llm``
     + ``MERKEN_<role>_LLM_MODEL=google/gemma-3-270m-it``
     + ``MERKEN_<role>_LLM_DEVICE=cpu`` (optional, default ``cpu``)
+- ``jev`` (network, opt-in; no torch)
+    + ``OPENROUTER_API_KEY`` or ``TYPESAFE_API_KEY`` in the environment
+    + ``MERKEN_<role>_JEV_THRESHOLD=0.6`` (optional; below it, write)
 
 where ``<role>`` is ``SHADOW`` or ``PRIMARY``.
 
@@ -56,7 +59,9 @@ from __future__ import annotations
 
 import os
 
-_ENABLED_VALUES = {"nanogpt", "llm"}
+_ENABLED_VALUES = {"nanogpt", "llm", "jev"}
+# Only these backends need torch loaded before vstash (Mistake #10).
+_TORCH_VALUES = {"nanogpt", "llm"}
 _SHADOW_KIND = os.environ.get("MERKEN_SHADOW", "").strip().lower()
 _PRIMARY_KIND = os.environ.get("MERKEN_PRIMARY", "").strip().lower()
 # Local-oracle labeling also needs torch loaded first (Mistake #10):
@@ -70,8 +75,8 @@ _LABEL_LLM_MODEL = os.environ.get("MERKEN_LABEL_LLM_MODEL", "").strip()
 # vstash (fastembed/ONNX). See notes/nanogpt-training-log.md
 # Mistake #10.
 if (
-    _SHADOW_KIND in _ENABLED_VALUES
-    or _PRIMARY_KIND in _ENABLED_VALUES
+    _SHADOW_KIND in _TORCH_VALUES
+    or _PRIMARY_KIND in _TORCH_VALUES
     or _LABEL_LLM_MODEL
 ):
     import torch  # noqa: F401
@@ -148,6 +153,16 @@ def _build_classifier(kind: str, role: str):
             )
         device = os.environ.get(f"MERKEN_{role}_LLM_DEVICE", "cpu")
         return LLMWriteDecider(model_name=model, device=device)
+
+    if kind == "jev":
+        from merken.classifiers.jev import JevWriteDecider
+
+        raw = os.environ.get(f"MERKEN_{role}_JEV_THRESHOLD", "").strip()
+        threshold = float(raw) if raw else 0.6
+        # JevClient resolves OPENROUTER_API_KEY / TYPESAFE_API_KEY itself
+        # and raises if neither is set; Memory catches that and falls
+        # back to the heuristic, like every other misconfigured backend.
+        return JevWriteDecider(confidence_threshold=threshold)
 
     raise RuntimeError(f"unknown MERKEN_{role} backend: {kind!r}")
 

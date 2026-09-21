@@ -7,6 +7,52 @@ project's benchmark-driven development model.
 
 ## [Unreleased]
 
+### Added (2026-09-18) — Jev deciders + recall/consolidate hooks
+
+- **`merken.classifiers.jev`**: `JevWriteDecider` (DECISION/NOISE on
+  TypeSafe's Jev, same instructions as `LLMWriteDecider`, stdlib HTTP,
+  no torch), `JevReranker` (answers-the-query filter + current-state
+  first) and `JevMaterializer` (extractive fact = current cluster
+  member; provenance restricted to DECISION-class versions of the same
+  decision). All fail open. Opt-in via `MERKEN_SHADOW=jev` /
+  `MERKEN_PRIMARY=jev` (`OPENROUTER_API_KEY` or `TYPESAFE_API_KEY`), or
+  by passing the objects to `Memory`.
+- **`Memory(reranker=..., recall_overfetch=4)`** and the
+  `merken.reranking.Reranker` protocol: a post-retrieval reranker for
+  `Memory.recall`. The recall audit row now records `reranker: <name>`.
+- **`Memory.consolidate(materialize_fn=...)`**: a `cluster -> Fact`
+  callable with full control over the fact text *and* `derived_from`,
+  so a materializer can expel cluster members. Takes precedence over
+  `synthesize_fn`.
+- `experiments/loop_quality/jev_probe.py`: cumulative ablation
+  (baseline / write / write+cons / all) with on-disk response cache.
+
+### Fixed (2026-09-18)
+
+- **Recall over-fetch was a no-op.** `Memory.recall` widened the merge
+  limit for `temporal_weight` but each layer still fetched
+  `LayeredRecaller`'s fixed budget (5 + 3), so rerankers only ever saw
+  8 candidates regardless of `top_k`. Per-layer fetch now honours the
+  over-fetch limit. Default behaviour (no reranker, `temporal_weight=0`)
+  is unchanged; with `--temporal-weight 0.2`,
+  `jay_vstash_2026_04_09_snapshot` goes 75% → 100%.
+- `jay_vstash_2026_04_09_snapshot_decontam` carried two queries whose
+  events the decontamination had removed (`kafka_meeting`,
+  `merken_design`). Dropped; the scenario is now 2/2 answerable.
+
+### Empirical findings (2026-09-18)
+
+- **Jev at write + consolidate + recall** (`experiments/loop_quality/RESULTS.md`):
+  `knowledge_update_20topics` 75% → **95%** (hit@1 7 → 18/20),
+  `knowledge_update_50topics` 52% → **66%** (hit@1 13 → 32/50, cluster
+  purity 91% → 100%, noise written 729 → 326), organic
+  `jay_vstash_2026_04_09_snapshot` 75% → 100% (purity 0% → 100%).
+  Whole table: $0.021. Remaining 50topics failures are retrieval (the
+  correct event is not in vstash's top-40), not decision.
+- `materialize_fact`'s "longest text wins" anchor was the direct cause
+  of 16/24 baseline failures on 50topics (stale version surfaced).
+
+
 ### Empirical findings (2026-04-27)
 
 - **gpt-oss-120b is the dominant Builder lever for LoCoMo and LME (3-seed both benchmarks).**

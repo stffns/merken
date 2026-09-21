@@ -48,6 +48,12 @@ class Conversation:
     answer_session_ids: list[str]
     haystack_sessions: dict[str, list[Turn]] = field(default_factory=dict)
     question_type: str | None = None
+    # Session timestamps as the dataset gives them ("2023/05/20 (Sat) 02:21"),
+    # keyed by session id, and the date the question is asked. Needed by
+    # time-aware rerankers: on chat logs the supersession signal for
+    # knowledge-update questions lives here, not in the text.
+    session_dates: dict[str, str] = field(default_factory=dict)
+    question_date: str | None = None
 
     @property
     def n_turns(self) -> int:
@@ -89,6 +95,11 @@ def _parse_record(record: dict[str, Any]) -> Conversation:
     else:
         raise TypeError(f"unexpected haystack_sessions type for {qid}: {type(raw_sessions)}")
 
+    session_dates: dict[str, str] = {}
+    raw_dates = record.get("haystack_dates")
+    if isinstance(raw_dates, list) and len(raw_dates) == len(sessions):
+        session_dates = dict(zip(sessions.keys(), (str(d) for d in raw_dates), strict=True))
+
     return Conversation(
         question_id=qid,
         question=question,
@@ -96,6 +107,8 @@ def _parse_record(record: dict[str, Any]) -> Conversation:
         answer_session_ids=answer_session_ids,
         haystack_sessions=sessions,
         question_type=question_type,
+        session_dates=session_dates,
+        question_date=record.get("question_date"),
     )
 
 

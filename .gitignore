@@ -106,3 +106,6 @@ experiments/phase2_training/adapter_pa/
 experiments/phase2_training/smollm3_ft_mlx_q4/
 experiments/phase2_training/smollm3_pa_mlx_q4/
 experiments/phase2_training/*_merged_hf/
+
+# Jev response cache written by experiments/loop_quality/jev_probe.py
+.jev_cache/
