@@ -183,14 +183,55 @@ _EXCERPT_CITE_RE = re.compile(r"\[excerpt\s+([0-9,\s|]+)\]", re.IGNORECASE)
 # --------------------------------------------------------------------- oracle
 
 
+class _OpenRouterOracle:
+    """Duck-typed stand-in for ``genai.Client`` that routes the same
+    Gemini model through OpenRouter's chat completions. Used when no
+    Gemini key is configured but ``OPENROUTER_API_KEY`` is. Keeps the
+    oracle in the Google family (the bias-avoidance argument above)
+    and ``oracle_score`` unchanged.
+    """
+
+    class _Models:
+        def __init__(self, key: str) -> None:
+            self._key = key
+
+        def generate_content(self, model: str, contents: str):
+            import urllib.request
+
+            body = json.dumps({
+                "model": f"google/{model}",
+                "temperature": 0,
+                "max_tokens": 400,
+                "messages": [{"role": "user", "content": contents}],
+            }).encode()
+            req = urllib.request.Request(
+                "https://openrouter.ai/api/v1/chat/completions", data=body, method="POST",
+                headers={
+                    "Authorization": f"Bearer {self._key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310
+                out = json.load(resp)
+            text = out["choices"][0]["message"].get("content") or ""
+            return type("R", (), {"text": text})()
+
+    def __init__(self, key: str) -> None:
+        self.models = self._Models(key)
+
+
 def _oracle_client():
     # Lazy import so `--help` works without google-genai. The repo
     # already uses gemini elsewhere; same env var fallback chain.
-    from google import genai
-
     key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not key:
-        raise SystemExit("GEMINI_API_KEY or GOOGLE_API_KEY required")
+        or_key = os.environ.get("OPENROUTER_API_KEY")
+        if or_key:
+            print("[oracle] no Gemini key; routing gemini-2.5-flash via OpenRouter")
+            return _OpenRouterOracle(or_key)
+        raise SystemExit("GEMINI_API_KEY / GOOGLE_API_KEY (or OPENROUTER_API_KEY) required")
+    from google import genai
+
     return genai.Client(api_key=key)
 
 
@@ -556,7 +597,7 @@ class Condition:
     """
 
     name: str
-    kind: str  # 'control' | 'rag' | 'rag_specific' | 'mode_a'
+    kind: str  # 'control' | 'rag' | 'rag_jev' | 'mode_a'
     temperature: float = 0.3
     top_k: int = TOP_K
     retrieval_mode: str = "dual"
@@ -631,6 +672,106 @@ def _run_rag_cfg(mem: vstash.Memory, question: str, c: Condition) -> dict:
     return result
 
 
+def _run_rag_jev_cfg(mem: vstash.Memory, question: str, c: Condition) -> dict:
+    """RAG with Jev on the recall path. Over-fetches the dual pool
+    (``extra.pool_k`` per search, so up to ``8 * pool_k`` candidates),
+    lets ``merken.classifiers.jev.JevReranker`` keep the excerpts that
+    answer the question and put the current state first, then hands
+    the top ``c.top_k`` to the same Builder prompt as ``rag``.
+    """
+    from types import SimpleNamespace
+
+    t0 = time.perf_counter()
+    pool_k = int(c.extra.get("pool_k", 10))
+    pool = retrieve(mem, question, top_k=pool_k, retrieval_mode=c.retrieval_mode)
+    reranker = _jev_reranker_singleton(c)
+    # Jev sees the SESSION date with each excerpt (from the dataset, not
+    # vstash's added_at, which is ingestion time): on LongMemEval the
+    # supersession signal for knowledge-update questions lives in the
+    # timestamps, not in the text ("Reverted…" is rare in chat logs).
+    conv = _ACTIVE_CONV
+    dates = conv.session_dates if conv is not None else {}
+
+    def _dated(e: dict) -> str:
+        parts = (e.get("source_id") or "").split("::")
+        ts = dates.get(parts[1]) if len(parts) >= 2 else None
+        return f"[session {ts}] {e['text']}" if ts else e["text"]
+
+    wrapped = [SimpleNamespace(text=_dated(e), path=e.get("chunk_id"), _e=e) for e in pool]
+    t_rr = time.perf_counter()
+    kept = reranker.rerank(question, wrapped)
+    rerank_s = time.perf_counter() - t_rr
+    excerpts = [w._e for w in kept][: c.top_k]
+    stats = retrieval_stats(excerpts)
+    joined = "\n\n---\n\n".join(
+        f"[excerpt {i} | source={e['source_id']}]\n{e['text'][:c.excerpt_truncation]}"
+        for i, e in enumerate(excerpts)
+    )
+    user = f"Context:\n{joined}\n\nQuestion: {question}"
+    answer, dt, usage = cerebras_chat(
+        BUILDER,
+        [
+            {"role": "system", "content": _resolve_system_prompt(c.system_prompt)},
+            {"role": "user", "content": user},
+        ],
+        c.max_tokens,
+        temperature=c.temperature,
+    )
+    result: dict = {
+        "answer": answer,
+        "retrieved": excerpts,
+        "retrieval_stats": stats,
+        "jev": {"pool": len(pool), "kept": len(kept), "rerank_s": rerank_s},
+        "wall_s": dt + rerank_s,
+        "total_tokens": usage.get("total_tokens", 0) or 0,
+        "builder_usage": usage,
+        "_total_s": time.perf_counter() - t0,
+    }
+    if c.cite_footer:
+        footer, grounded, cited_ids = _cite_footer_from_rag(answer, excerpts)
+        result["answer"] = answer + footer
+        result["grounded"] = grounded
+        result["cited_excerpt_ids"] = cited_ids
+    return result
+
+
+_JEV_RERANKERS: dict = {}
+
+
+def _jev_reranker_singleton(c: Condition):
+    from merken.classifiers.jev import JevReranker
+
+    conv = _ACTIVE_CONV
+    qdate = (conv.question_date if conv is not None else None) or "unknown"
+    time_aware = bool(c.extra.get("time_aware", False))
+    key = (
+        float(c.extra.get("min_answer", 0.5)),
+        bool(c.extra.get("pick_current", True)),
+        int(c.extra.get("min_keep", c.top_k)),
+        time_aware,
+        qdate if time_aware else "",
+    )
+    if key not in _JEV_RERANKERS:
+        instr = None
+        if time_aware:
+            instr = (
+                f"The question is asked on {qdate}. Each text is prefixed with its session "
+                "date. Which text answers the question FOR THE TIME IT REFERS TO? If the "
+                "question is about the present ('currently', 'now', no time cue), prefer the "
+                "most recent session that answers it; if it refers to an earlier moment "
+                "('when I first started', 'two weeks ago', 'originally'), prefer the session "
+                'from that time. Question: "{query}"'
+            )
+        _JEV_RERANKERS[key] = JevReranker(
+            min_answer=key[0], pick_current=key[1], min_keep=key[2],
+            current_instructions=instr, workers=8,
+        )
+    return _JEV_RERANKERS[key]
+
+
+_ACTIVE_CONV = None  # set by the eval loops so rerankers can see session dates
+
+
 def _run_mode_a_cfg(mem: vstash.Memory, question: str, c: Condition) -> dict:
     # Mode A's internal calls still read temperature from the global
     # default (0.3) for now. Threading temperature into run_mode_a
@@ -643,6 +784,7 @@ def _run_mode_a_cfg(mem: vstash.Memory, question: str, c: Condition) -> dict:
 CONDITION_KINDS: dict[str, Callable[[vstash.Memory, str, Condition], dict]] = {
     "control": _run_control_cfg,
     "rag": _run_rag_cfg,
+    "rag_jev": _run_rag_jev_cfg,
     "mode_a": _run_mode_a_cfg,
 }
 
@@ -731,6 +873,8 @@ def run_eval(cfg: EvalConfig) -> list[dict]:
             # Fresh DB per question so haystacks don't pollute each
             # other. Project tag is the qid so vstash internal
             # filtering stays predictable.
+            global _ACTIVE_CONV
+            _ACTIVE_CONV = conv
             db_path = tmp_root / f"{conv.question_id}.db"
             if db_path.exists():
                 db_path.unlink()
@@ -896,6 +1040,8 @@ def run_grid_eval(cfg: EvalConfig) -> list[dict]:
             print(f"Q: {conv.question[:200]}")
             print(f"GT: {gt_text[:200]}")
 
+            global _ACTIVE_CONV
+            _ACTIVE_CONV = conv
             db_path = tmp_root / f"{conv.question_id}.db"
             if db_path.exists():
                 db_path.unlink()

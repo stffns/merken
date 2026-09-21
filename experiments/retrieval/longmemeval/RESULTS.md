@@ -1864,3 +1864,68 @@ overstated the per-shape effects by 2-6x.
 - Seeds 42/43 new artifacts: `pipeline_runs/vstash_ask_seed4{2,3}_n30_gptoss120b-builder-scaleup-3seed_*.jsonl`
 - Cerebras-rejudged baselines (for apples-to-apples): `pipeline_runs/vstash_ask_seed4{2,3}_n30_vstash_ask_seed{42,43}_*_rejudged_cer.jsonl`
 - Run logs: `pipeline_runs/lme_gptoss120b_seed4{2,3}_log.txt`
+
+## Jev on the recall path — Mode A grid (2026-09-21)
+
+Grids: `grids/jev_recall*.yml`, driver `mode_a_eval.py` (new `rag_jev`
+condition kind: dual pool at `pool_k` → `merken.classifiers.jev.JevReranker`
+→ top `top_k` → same RAG-baseline Builder prompt). N=49, seed 42,
+`longmemeval_s`. Builder **`gpt-oss-120b`** (Cerebras retired
+`llama3.1-8b`; override with `MERKEN_LME_BUILDER`). Oracle
+`gemini-2.5-flash` routed via OpenRouter (no Gemini key in this
+environment; same model family as before).
+
+### Harness bug found on the way: the Builder was being truncated
+
+`MAX_TOKENS_DRAFT = 300` was sized for llama3.1-8b. `gpt-oss-120b`
+*reasons* first; at 300 tokens it returned `completion_tokens == 300`
+with **empty content** on 9/49 baseline answers and 5/49 Jev answers,
+all scored as wrong. Longer context → more reasoning → more blanks, so
+the bug penalised the baseline more than the leaner Jev conditions and
+manufactured a fake Jev "win" in the first grids (rows kept below for
+the record). **Any gpt-oss-120b Mode A number produced with
+`MAX_TOKENS_DRAFT=300` — including the 2026-04-27 3-seed 67.8% — is
+likely understated;** the April jsonl logs are not in the repo, so
+this is a suspicion, not a verified correction.
+
+Two more bit-rots fixed: `mem.search(..., fts_only=True)` →
+`retrieval_mode="fts_only"` (vstash ≥0.3x), and `Conversation` now
+keeps `session_dates` / `question_date` from the dataset (they were
+parsed and dropped).
+
+### Clean comparison (both conditions `max_tokens: 1500`, 0 blanks)
+
+| condition | correct | knowledge-update (7) | multi-session (16) | temporal (11) | single-session (15) | avg tok/q | avg wall/q |
+|---|---|---|---|---|---|---|---|
+| `rag_t00_k5_mt1500` | **81.6%** (40/49) | 7 | 11 | 7 | 15 | 2380 | 0.5s |
+| `rag_jev_v3_k5_pool5_mt1500` | 79.6% (39/49) | 6 | 11 | 7 | 15 | **955** | 2.3s |
+
+Jev v3 = answers-the-question filter (`noul` ≥ 0.5) with `min_keep = top_k`
+backfill, real session dates prefixed to every excerpt, and a time-aware
+"which text answers for the time the question refers to" `choice`
+(present → most recent session; "when I first started" → that session).
+
+Flips rag → jev: +1 (`multi-session`, fitness days), −2 (`multi-session`
+"how many graduation ceremonies" — an aggregation count where reordering
+5 excerpts lost one; `knowledge-update` "personal best 5K" — the filter
+dropped the excerpt with the newer time).
+
+### Reading
+
+- **On LongMemEval, Jev on recall buys tokens, not accuracy.** −1 question
+  net at N=49 (inside noise), 2.5× fewer Builder tokens, +1.8 s/q of Jev
+  calls. LME chunk retrieval is already at R@5 96%, the dual pool is ≤40
+  excerpts, and a 120B Builder reads 2.4k tokens without trouble: there is
+  little noise to filter and "current state" is rarely ambiguous in the
+  text. This is the opposite regime from `knowledge_update_50topics`
+  (90% noise, versions that overwrite each other), where the same
+  reranker took the loop from 52% to 82% (`experiments/loop_quality/RESULTS.md`).
+- Two failure shapes to remember before putting any filter on a recall
+  path: **aggregation questions** (counts/sums across sessions) need
+  every partial answer, and **knowledge-update** needs the superseding
+  excerpt *kept*, not merely ranked. `min_keep` covers the first only
+  partially; a safer default is "reorder, never drop" when the pool is
+  already small.
+- Superseded rows (kept for the record; both sides truncated):
+  `rag_t00_k5` 71.4% (9 blanks) vs `rag_jev_k5_pool5` 71.4% (5 blanks),
+  `rag_jev_v2` 73.5%, `rag_jev_v3` 73.5%.
