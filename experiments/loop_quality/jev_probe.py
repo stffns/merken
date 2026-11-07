@@ -49,6 +49,7 @@ from merken.classifiers.jev import (
     JevMaterializer,
     JevReranker,
     JevWriteDecider,
+    local_call_fn,
 )
 from merken.policies.should_consolidate import PeriodicConsolidator
 from merken.policies.should_recall import LayeredRecaller
@@ -61,8 +62,11 @@ MODES = ("baseline", "write", "write+cons", "all")
 class CachingJevClient(JevClient):
     """JevClient with an on-disk response cache and a cost/usage tally."""
 
-    def __init__(self, cache_dir: Path = CACHE_DIR) -> None:
-        super().__init__()
+    def __init__(self, cache_dir: Path = CACHE_DIR, local: str | None = None) -> None:
+        if local:  # same requests, answered on this machine by an open d1 model
+            super().__init__(call_fn=local_call_fn(local), model=local, url="local")
+        else:
+            super().__init__()
         self._cache = cache_dir
         self._cache.mkdir(exist_ok=True)
         self.stats = {"calls": 0, "cached": 0, "cost": 0.0, "tokens": 0, "model": ""}
@@ -201,9 +205,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--top-k", type=int, default=5)
     p.add_argument("--overfetch", type=int, default=4)
     p.add_argument("--out", type=Path, default=None, help="write results JSON here")
+    p.add_argument(
+        "--local",
+        default=None,
+        metavar="MODEL",
+        help="answer locally with an open d1 model (e.g. LiquidAI/d1-2B) instead of the API",
+    )
     a = p.parse_args(argv)
 
-    client = CachingJevClient()
+    client = CachingJevClient(local=a.local)
     results = []
     for sp in a.scenario:
         for mode in a.modes.split(","):

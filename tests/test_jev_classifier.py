@@ -309,3 +309,39 @@ def test_reranker_custom_current_instructions_are_used() -> None:
     r = JevReranker(JevClient(call_fn=call), current_instructions="AS OF DATE X: {query}")
     r.rerank("what now?", [Hit("a"), Hit("b")])
     assert seen == ["AS OF DATE X: what now?"]
+
+
+# ------------------------------------------------------------ local transport
+
+
+def test_merken_jev_local_env_selects_the_local_transport(monkeypatch):
+    """MERKEN_JEV_LOCAL: no API key needed, the local model id is carried."""
+    import merken.classifiers.jev as jev
+
+    seen = {}
+
+    def fake_local(model, **kw):
+        seen["model"] = model
+        return lambda body: {"answers": {"x": {"noul": 0.9}}, "usage": {"cost": 0.0}}
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.setenv("MERKEN_JEV_LOCAL", "LiquidAI/d1-2B")
+    monkeypatch.setattr(jev, "local_call_fn", fake_local)
+    client = jev.JevClient()
+    assert seen["model"] == "LiquidAI/d1-2B"
+    assert client.url == "local"
+    out = client.decide("s", {"x": {"type": "noul", "instructions": "?"}})
+    assert out["answers"]["x"]["noul"] == 0.9
+
+
+def test_local_classmethod_uses_call_fn(monkeypatch):
+    import merken.classifiers.jev as jev
+
+    def fake_local(model, **kw):
+        return lambda body: {"answers": {}, "model": model}
+
+    monkeypatch.setattr(jev, "local_call_fn", fake_local)
+    client = jev.JevClient.local("LiquidAI/d1-2B")
+    assert client.model == "LiquidAI/d1-2B"
+    assert client.decide("s", {})["model"] == "LiquidAI/d1-2B"

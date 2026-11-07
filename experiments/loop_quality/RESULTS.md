@@ -621,6 +621,41 @@ input tokens) and reruns are free.
 | | | all | 19 (0) | 3 | **100%** | **4/4 = 100%** | **3/4** |
 | jay_vstash_…_decontam (organic, 2 answerable queries) | 7 | baseline / all | 7 (0) | 2 | 100% | 2/2 | 2/2 |
 
+### Same ablation, fully local: Liquid AI d1-2B as the Jev transport (2026-11-07)
+
+`python -m experiments.loop_quality.jev_probe --local LiquidAI/d1-2B --scenario …`
+(`JevClient.local()` / `MERKEN_JEV_LOCAL`). Identical requests, deciders, instructions and
+thresholds; the only change is who answers them: an open-weights ~2B decision model on an
+Apple M5 Max (MPS, bf16, while an unrelated training job shared the GPU). No key, no network,
+$0, 3,102 model calls over the four scenarios. Results in `jev_probe_d1_local.json`.
+
+| Scenario | Mode | written (noise) | facts | purity | strict | hit@1 | vs Jev API `all` |
+|---|---|---|---|---|---|---|---|
+| knowledge_update_hard | all | 35 (23) | 5 | 100% | 4/4 | **4/4** | = (35 (23), 4/4, 4/4) |
+| knowledge_update_20topics | write | 177 (120) | 35 | 89% | 14/20 | 8/20 | |
+| | write+cons | 177 (120) | 35 | 100% | 15/20 | 8/20 | |
+| | all | 177 (120) | 35 | 100% | **17/20 = 85%** | **15/20** | -2 strict, -3 hit@1 (Jev 19/20, 18/20) |
+| knowledge_update_50topics | write | 368 (225) | 71 | 86% | 28/50 | 18/50 | |
+| | write+cons | 368 (225) | 71 | 100% | 29/50 | 16/50 | |
+| | all | 368 (225) | 71 | 100% | **33/50 = 66%** | **32/50** | **= (Jev 33/50, 32/50)** |
+| jay_vstash_2026_04_09_snapshot (organic) | write | 16 (0) | 3 | 33% | 4/4 | 1/4 | |
+| | all | 16 (0) | 3 | 100% | **4/4** | **4/4** | +1 hit@1 (Jev 4/4, 3/4) |
+
+**Reading:**
+
+- **Local d1 matches the hosted Jev end to end** on the two scenarios with the most queries'
+  weight behind them: identical strict and hit@1 on `knowledge_update_50topics` (33/50, 32/50)
+  and `knowledge_update_hard` (4/4, 4/4); one better hit@1 on the organic snapshot; 2-3 queries
+  behind on `knowledge_update_20topics`.
+- **It filters harder.** Noise written drops to 225 vs Jev's 326 on 50topics (-31%) and 120 vs
+  161 on 20topics, but it also skips more real content: on the organic snapshot it writes 16/20
+  documents (Jev 19/20). The four skipped docs did not cost a query here; on a corpus with more
+  queries they could. Shadow it (`MERKEN_SHADOW=jev` + `MERKEN_JEV_LOCAL`) before trusting it as
+  the primary write filter.
+- **What it buys:** CONSTITUTION §4.1 (local-first) without a carve-out. The same three
+  deciders run offline and keyless, so the "Jev is a network call" caveat in this PR becomes an
+  option rather than a requirement.
+
 **Observations:**
 
 - The lift comes from the *combination*. `write` alone cleans (noise

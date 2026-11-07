@@ -28,7 +28,12 @@ returns the hits unchanged, a materializer error falls back to
 
 Transport: OpenRouter's Decisions endpoint (``OPENROUTER_API_KEY``) or
 TypeSafe's API (``TYPESAFE_API_KEY``). Both take the same body and
-return the same answers. See ``experiments/loop_quality/jev_probe.py``
+return the same answers. **Or fully local:** ``JevClient.local()`` /
+``MERKEN_JEV_LOCAL=LiquidAI/d1-2B`` answers the same request on this
+machine with an open d1 decision model (Liquid AI, ~2B params, same
+``noul`` / ``choice`` / ``score`` primitives), so the deciders below run
+offline, keyless and at zero cost (needs torch + transformers).
+See ``experiments/loop_quality/jev_probe.py``
 for the ablation that justified each piece.
 """
 
@@ -73,6 +78,60 @@ DEFAULT_CRITERIA: dict[str, str] = {
 }
 
 CallFn = Callable[[dict[str, Any]], dict[str, Any]]
+LOCAL_MODEL = "LiquidAI/d1-2B"
+
+
+def local_call_fn(
+    model: str = LOCAL_MODEL, *, device: str = "auto", max_state_chars: int = 60_000
+) -> CallFn:
+    """A ``JevClient`` transport answered on this machine by an open d1 decision model.
+
+    d1 takes Jev's request unchanged (a state plus named ``noul`` / ``choice`` /
+    ``score`` questions) and returns the same ``answers`` shape in one forward
+    pass, so every Jev decider here works offline. The model loads on the first
+    call; calls are serialised (one model, one device). Long string states are
+    cut at ``max_state_chars`` (d1 is less reliable past ~64K tokens).
+    """
+    import threading
+
+    lock = threading.Lock()
+    loaded: dict[str, Any] = {}
+
+    def _load() -> None:
+        try:
+            import torch
+            from transformers import AutoModel
+        except ImportError as exc:  # pragma: no cover - only without torch
+            raise ImportError(
+                "local Jev transport needs torch, torchvision and transformers>=5.19"
+            ) from exc
+        dev = device
+        if dev == "auto":
+            dev = (
+                "cuda"
+                if torch.cuda.is_available()
+                else "mps"
+                if torch.backends.mps.is_available()
+                else "cpu"
+            )
+        dtype = torch.float32 if dev == "cpu" else torch.bfloat16
+        loaded["torch"] = torch
+        loaded["model"] = (
+            AutoModel.from_pretrained(model, trust_remote_code=True, dtype=dtype).to(dev).eval()
+        )
+
+    def call(body: dict[str, Any]) -> dict[str, Any]:
+        state = body["state"]
+        if isinstance(state, str):
+            state = state[:max_state_chars]
+        with lock:
+            if "model" not in loaded:
+                _load()
+            with loaded["torch"].inference_mode():
+                out = loaded["model"].system_one(state, body["questions"])
+        return {"model": model, "answers": out["answers"], "usage": {**out["usage"], "cost": 0.0}}
+
+    return call
 
 
 class JevClient:
@@ -94,6 +153,10 @@ class JevClient:
         max_retries: int = 3,
         call_fn: CallFn | None = None,
     ) -> None:
+        if call_fn is None and api_key is None and os.environ.get("MERKEN_JEV_LOCAL"):
+            model = model or os.environ["MERKEN_JEV_LOCAL"]
+            call_fn = local_call_fn(model)
+            url = url or "local"
         if call_fn is None and api_key is None:
             if os.environ.get("OPENROUTER_API_KEY"):
                 api_key = os.environ["OPENROUTER_API_KEY"]
@@ -112,6 +175,11 @@ class JevClient:
         self._timeout = timeout_s
         self._max_retries = max_retries
         self._call_fn = call_fn
+
+    @classmethod
+    def local(cls, model: str = LOCAL_MODEL, **kwargs: Any) -> JevClient:
+        """A client whose transport is a local d1 model instead of the network."""
+        return cls(call_fn=local_call_fn(model, **kwargs), model=model, url="local")
 
     def decide(self, state: Any, questions: dict[str, dict[str, Any]]) -> dict[str, Any]:
         """POST one state + questions, return the parsed response (``answers`` etc.)."""
