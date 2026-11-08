@@ -23,6 +23,13 @@ project's benchmark-driven development model.
   `_build_classifier` raises `RuntimeError`, and `Memory` falls back to
   `HeuristicWriteDecider` as documented.
 
+### Changed
+
+- **`uv.lock` is now tracked.** Without it every fresh `uv sync` re-resolved
+  open ranges against current PyPI, which is how mcp 2.x arrived unnoticed.
+  `tests/test_lockfile.py` runs `uv lock --check`; after changing
+  dependencies, run `uv lock` and commit the result.
+
 ### Empirical findings (2026-04-27)
 
 - **gpt-oss-120b is the dominant Builder lever for LoCoMo and LME (3-seed both benchmarks).**
