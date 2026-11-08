@@ -112,3 +112,6 @@ experiments/phase2_training/*_merged_hf/
 # Per-event results and run logs quote private transcript snippets; RESULTS.md keeps the aggregates
 experiments/d1_write_filter/results*.json
 experiments/d1_write_filter/*.log
+
+# Jev response cache written by experiments/loop_quality/jev_probe.py
+.jev_cache/

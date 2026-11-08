@@ -15,10 +15,24 @@ Formula: reranked_score = score * (1 + temporal_weight * recency_fraction)
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from vstash import SearchResult
+
+
+class Reranker(Protocol):
+    """Post-retrieval reranker plugged into ``Memory.recall``.
+
+    Receives the merged, deduped candidate list (over-fetched to
+    ``top_k * overfetch``) and returns a new ordering. It may drop
+    candidates; ``Memory.recall`` truncates to the caller's ``top_k``
+    afterwards. Implementations must not mutate the hits.
+    """
+
+    name: str
+
+    def rerank(self, query: str, hits: list[SearchResult]) -> list[SearchResult]: ...
 
 
 def _parse_ts(iso: str | None) -> datetime | None:

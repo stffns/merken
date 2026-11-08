@@ -37,8 +37,14 @@ _PREVIEW_CHARS = 160
 def format_recall_audit_row(
     query: str,
     plan: RecallPlan,
+    reranker: str | None = None,
 ) -> tuple[str, str]:
-    """Build a (title, body) pair for one recall audit entry."""
+    """Build a (title, body) pair for one recall audit entry.
+
+    ``reranker`` names the post-retrieval reranker that ran on the
+    candidates (``rerank_by_recency`` or a ``Reranker`` instance), so
+    the audit row explains the final ordering, not just the plan.
+    """
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
     preview = " ".join(query.split())[:_PREVIEW_CHARS]
     layers = ",".join(f"{r.layer}:{r.top_k}" for r in plan.layers)
@@ -49,6 +55,7 @@ def format_recall_audit_row(
         f"plan_layers: {layers}\n"
         f"reason: {plan.reason}\n"
         f"policy: {plan.policy}\n"
+        f"reranker: {reranker or 'none'}\n"
     )
     title = f"audit:should_recall:{plan.reason}:{ts}"
     return title, body

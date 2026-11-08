@@ -1,0 +1,7 @@
+# v3: v2 (min_keep) + REAL session dates from the dataset on every excerpt
+# and a time-aware "which answers for the time the question refers to"
+# choice (present -> most recent; "when I first started" -> that session).
+conditions:
+  - {name: rag_jev_v3_k5_pool5, kind: rag_jev, temperature: 0.0, top_k: 5, pool_k: 5,
+     min_keep: 5, time_aware: true, retrieval_mode: dual, system_prompt: rag_baseline,
+     cite_footer: true}

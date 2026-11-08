@@ -1,0 +1,20 @@
+# Jev on the recall path vs the RAG baseline it wraps.
+#
+#   rag_t00_k5        -- production-candidate RAG baseline (temp 0.0, top_k 5,
+#                        dual retrieval, cite footer). Same as rag_baseline_sweep.
+#   rag_jev_k5_pool5  -- dual pool at pool_k=5 (<= 40 candidates) -> JevReranker
+#                        (answers-the-question >= 0.5, current-state first) -> top 5
+#   rag_jev_k5_pool10 -- same with pool_k=10 (<= 80 candidates)
+#
+#   python -m experiments.retrieval.longmemeval.mode_a_eval \
+#     --grid experiments/retrieval/longmemeval/grids/jev_recall.yml \
+#     --subset longmemeval_s --n 49 --seed 42 \
+#     --out experiments/retrieval/longmemeval/mode_a_eval_grids
+
+conditions:
+  - {name: rag_t00_k5,        kind: rag,     temperature: 0.0, top_k: 5,
+     retrieval_mode: dual, system_prompt: rag_baseline, cite_footer: true}
+  - {name: rag_jev_k5_pool5,  kind: rag_jev, temperature: 0.0, top_k: 5, pool_k: 5,
+     retrieval_mode: dual, system_prompt: rag_baseline, cite_footer: true}
+  - {name: rag_jev_k5_pool10, kind: rag_jev, temperature: 0.0, top_k: 5, pool_k: 10,
+     retrieval_mode: dual, system_prompt: rag_baseline, cite_footer: true}
