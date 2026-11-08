@@ -106,3 +106,9 @@ experiments/phase2_training/adapter_pa/
 experiments/phase2_training/smollm3_ft_mlx_q4/
 experiments/phase2_training/smollm3_pa_mlx_q4/
 experiments/phase2_training/*_merged_hf/
+
+# LoRA adapters trained on private merken labels (experiments/d1_write_filter/train.py)
+/adapters/
+# Per-event results and run logs quote private transcript snippets; RESULTS.md keeps the aggregates
+experiments/d1_write_filter/results*.json
+experiments/d1_write_filter/*.log
