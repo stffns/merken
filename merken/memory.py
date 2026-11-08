@@ -16,6 +16,8 @@ goes through vstash's public API. Engram never reads the SQLite tables.
 
 from __future__ import annotations
 
+import dataclasses
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -42,6 +44,7 @@ from merken.consolidation import (
     fact_fingerprint,
     materialize_fact,
 )
+from merken.enrichment import Enricher, apply_enrichment, strip_enrichment
 from merken.policies.should_consolidate import (
     ConsolidateContext,
     ConsolidateDecider,
@@ -171,6 +174,26 @@ def _resolve_vstash_embed_model(vstash_memory: vstash.Memory) -> str:
     return fallback
 
 
+logger = logging.getLogger(__name__)
+
+
+def _restore_enrichment(
+    fact: Fact,
+    cluster: list[tuple[str, str]],
+    raw_cluster: list[tuple[str, str]],
+) -> Fact:
+    """Swap the raw member text a fact was built from for its enriched version.
+
+    Longest member first, so a member that is a substring of another never
+    wins. A fact that quotes no member verbatim (LLM synthesis) is returned
+    unchanged.
+    """
+    stored = dict(cluster)
+    for path, raw in sorted(raw_cluster, key=lambda m: len(m[1]), reverse=True):
+        if raw and raw != stored[path] and raw in fact.text:
+            return dataclasses.replace(fact, text=fact.text.replace(raw, stored[path], 1))
+    return fact
+
 @dataclass(frozen=True)
 class ForgetResult:
     """The outcome of a ``Memory.forget`` call.
@@ -199,6 +222,8 @@ class RememberResult:
     written: bool
     decision: Decision
     ingest: IngestResult | None
+    # The line an ``Enricher`` stored on top of the event, if any.
+    enrichment: str | None = None
 
 
 class Memory:
@@ -236,10 +261,14 @@ class Memory:
         reranker: Reranker | None = None,
         recall_overfetch: int = 4,
         trajectory_window: int = 20,
+        enricher: Enricher | None = None,
     ) -> None:
         self.project = project
         self.collection = collection
         self._temporal_weight = temporal_weight
+        # Optional write-time enricher (``merken.enrichment.Enricher``): one
+        # category-level line stored on top of each written event. None = off.
+        self._enricher = enricher
         # Optional post-retrieval reranker (``merken.reranking.Reranker``).
         # When set, ``recall`` over-fetches ``top_k * recall_overfetch``
         # candidates from every layer before reranking. None = off.
@@ -295,7 +324,8 @@ class Memory:
                     doc.path,
                     collection=self.collection,
                 )
-                text = " ".join(chunks).strip()
+                # Dedup compares raw events: drop an enricher's line.
+                text = strip_enrichment(" ".join(chunks).strip())
                 if text:
                     out.append(text)
             except Exception:
@@ -326,8 +356,18 @@ class Memory:
         if not decision.write:
             return RememberResult(written=False, decision=decision, ingest=None)
 
+        # Enrichment never fails a write: on any error the raw text is stored.
+        line: str | None = None
+        if self._enricher is not None:
+            try:
+                line = self._enricher.enrich(text)
+            except Exception as exc:  # noqa: BLE001 -- fail open, see enrichment.py
+                logger.warning("enricher %s failed, storing raw text: %s",
+                               getattr(self._enricher, "name", "?"), exc)
+        stored = apply_enrichment(text, line)
+
         ingest = self._vstash.remember(
-            text,
+            stored,
             title=title,
             collection=self.collection,
             layer=layer,
@@ -350,7 +390,9 @@ class Memory:
             self._write_audit(event, override)
             return RememberResult(written=False, decision=override, ingest=ingest)
 
-        return RememberResult(written=True, decision=decision, ingest=ingest)
+        return RememberResult(
+            written=True, decision=decision, ingest=ingest, enrichment=line
+        )
 
     # ------------------------------------------------------------------- read
 
@@ -631,6 +673,16 @@ class Memory:
                 method=method,
             )
 
+        # Cluster on the raw events: an enricher's category line makes
+        # different decisions of the same category look alike and would
+        # merge them. Facts are still materialized from the stored
+        # (enriched) text, so they keep the line for retrieval.
+        stored_text = dict(events)
+        raw_events = [(path, strip_enrichment(text)) for path, text in events]
+
+        def _restore(cs: list[list[tuple[str, str]]]) -> list[list[tuple[str, str]]]:
+            return [[(path, stored_text[path]) for path, _ in c] for c in cs]
+
         if method == "embedding_v1":
             model_name = _resolve_vstash_embed_model(self._vstash)
 
@@ -641,19 +693,21 @@ class Memory:
                     model_name=model_name,
                     backend="auto",
                 )
-            clusters = cluster_by_embedding(
-                events,
+            clusters = _restore(cluster_by_embedding(
+                raw_events,
                 embed_fn=_embed,
                 threshold=embedding_threshold,
                 linkage=embedding_linkage,
-            )
+            ))
             reason = (
                 f"clustered_embedding>={embedding_threshold}"
                 f"_linkage={embedding_linkage}"
                 f"_mincluster={min_cluster}"
             )
         elif method == "jaccard_v1":
-            clusters = cluster_by_jaccard(events, threshold=jaccard_threshold)
+            clusters = _restore(
+                cluster_by_jaccard(raw_events, threshold=jaccard_threshold)
+            )
             reason = f"clustered_jaccard>={jaccard_threshold}_mincluster={min_cluster}"
         elif method == "recall_v1":
             def _cluster_recall(query: str, top_k: int) -> list[Any]:
@@ -663,11 +717,11 @@ class Memory:
                     collection=self.collection,
                     layer="episodic",
                 )
-            clusters = cluster_by_recall(
-                events,
+            clusters = _restore(cluster_by_recall(
+                raw_events,
                 recall_fn=_cluster_recall,
                 top_k=recall_top_k,
-            )
+            ))
             reason = f"clustered_recall_topk={recall_top_k}_mincluster={min_cluster}"
         elif method == "brief_v1":
             if synthesize_fn is None:
@@ -759,16 +813,21 @@ class Memory:
         for cluster in clusters:
             if len(cluster) < min_cluster:
                 continue
+            # Materializers judge the events, not an enricher's index line:
+            # hand them the raw text, then put the line back on the member
+            # the fact was built from so the semantic layer keeps it.
+            raw_cluster = [(path, strip_enrichment(text)) for path, text in cluster]
             if materialize_fn is not None:
                 # Full control over the fact: text AND provenance. A
                 # materializer may expel cluster members it decides do
                 # not belong (see ``merken.classifiers.jev.JevMaterializer``).
-                fact = materialize_fn(cluster)
+                fact = materialize_fn(raw_cluster)
             elif synthesize_fn is not None:
                 from merken.consolidation import materialize_fact_llm
-                fact = materialize_fact_llm(cluster, synthesize_fn)
+                fact = materialize_fact_llm(raw_cluster, synthesize_fn)
             else:
-                fact = materialize_fact(cluster)
+                fact = materialize_fact(raw_cluster)
+            fact = _restore_enrichment(fact, cluster, raw_cluster)
             fp = fact_fingerprint(fact)
             self._vstash.remember(
                 fact.text,

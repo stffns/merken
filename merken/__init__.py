@@ -10,6 +10,7 @@ that should outlive any specific implementation.
 # Mistake #10 for why the load order matters.
 from merken import _shadow as _shadow  # noqa: F401
 from merken.consolidation import ConsolidationResult, Fact
+from merken.enrichment import Enricher, LLMEnricher, jev_decision_gate
 from merken.memory import ForgetResult, Memory, RememberResult
 from merken.policies import (
     AlwaysWrite,
@@ -51,6 +52,7 @@ __all__ = [
     "ConsolidationDecision",
     "ConsolidationResult",
     "Decision",
+    "Enricher",
     "Event",
     "Fact",
     "ForgetConsolidated",
@@ -62,6 +64,7 @@ __all__ = [
     "ForgetSuperseded",
     "HeuristicWriteDecider",
     "LayerRequest",
+    "LLMEnricher",
     "LayeredRecaller",
     "Memory",
     "NeverConsolidate",
@@ -76,4 +79,5 @@ __all__ = [
     "WriteContext",
     "WriteDecider",
     "__version__",
+    "jev_decision_gate",
 ]

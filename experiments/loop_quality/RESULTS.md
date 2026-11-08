@@ -790,3 +790,54 @@ Actions)`. The LLM never sees a query. Then the full Jev loop runs
 category-level line for what Jev keeps) lifts the ceiling itself. The
 combination is the thesis: merken is the layer that decides and writes;
 vstash stores and searches; an LLM drafts only when merken asks.
+
+## Write-time enrichment in production: `Memory(enricher=LLMEnricher(...))` (2026-11-08)
+
+`write_enrich_probe.py` enriched events outside merken. `merken.enrichment`
+moves it into `Memory.remember`: an `Enricher` returns one category-level line
+for each event the write policy kept, stored on top of the event as
+`» <line> «`. Driver: `experiments/loop_quality/enrich_prod.py`, results in
+`enrich_prod.json`. Setup, both rows identical except the enricher:
+
+- write `Heuristic -> JevWriteDecider`, materializer `JevMaterializer`,
+  reranker `JevReranker`, over-fetch 20, top_k 5; Jev answered by the local
+  **d1-2B** (no key, no network)
+- enricher `LLMEnricher` on DeepSeek's `deepseek-flash` (direct API, thinking
+  off), gated by `jev_decision_gate` (d1): 543 lines written, 115 written
+  events gated out as NOISE, 0 empty responses over all ten scenarios
+
+| Scenario | Mode | R@5 | R@20 | R@100 | purity | strict | hit@1 |
+|---|---|---|---|---|---|---|---|
+| knowledge_update_50topics | loop | 46% | 72% | 84% | 100% | 38/50 = 76% | 33 |
+| | + enrich | **80%** | **92%** | 94% | 100% | **43/50 = 86%** | **39** |
+| knowledge_update_20topics | loop | 50% | 85% | 95% | 100% | 19/20 | 17 |
+| | + enrich | **95%** | **100%** | 100% | 100% | **20/20** | 17 |
+| knowledge_update_hard | loop | 75% | 100% | 100% | 100% | 4/4 | 4 |
+| | + enrich | 100% | 100% | 100% | 100% | 4/4 | 3 |
+| knowledge_update | loop | 75% | 100% | 100% | 100% | 4/4 | 4 |
+| | + enrich | 100% | 100% | 100% | 100% | 4/4 | 3 |
+| jay_vstash_2026_04_09_snapshot (organic) | loop / + enrich | 100% | 100% | 100% | 100% | 4/4 | 4 |
+| jay_vstash_…_decontam, analytics_project, noisy_agent_stream, session_2026_04_09 | loop / + enrich | 100% | 100% | 100% | 100% | all pass | = |
+| bilingual_es_en_2026_04_14 | loop / + enrich | 50% | 50% | 50% | 100% | 3/6 | 3 |
+
+**Reading:**
+
+- **The September probe reproduces through the library.** 50topics: retrieval
+  ceiling R@5 46% → 80%, R@20 72% → 92%; strict 76% → 86%. 3 of the 7 remaining
+  fails are the known scenario bugs (`access_control`, `service_discovery`,
+  `rate_limiting`), so 43/47 answerable. The probe's 46/50 used hosted Jev; the
+  gap is the local d1 reranker (R@100 94% = 47 found, 43 kept in the top 5),
+  which already trailed hosted Jev by 2–3 queries on 20topics.
+- **No query regresses on strict.** hit@1 moves +6 on 50topics and −1 on two
+  4-query scenarios (`knowledge_update`, `knowledge_update_hard`): a superseded
+  decision gets a line as on-topic as the current one ("Caching layer: Redis"),
+  and the current version lands at rank 2. Total hit@1 79 → 83.
+- **bilingual stays at 3/6**: those queries are a language gap, not a
+  vocabulary gap; an English category line does not bridge Spanish events.
+- **Two bugs the first run surfaced, fixed before these numbers:** with the
+  stored (enriched) text, consolidation merged events that only shared a
+  category line (purity: organic snapshot 100% → 0%, noisy_agent_stream →
+  33%), and `JevMaterializer` judged the lines instead of the events. Clustering
+  and materialization now read the raw event (`strip_enrichment`); the fact
+  text gets the line back, so the semantic layer keeps it. Purity is 100% on
+  every scenario.

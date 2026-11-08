@@ -663,6 +663,42 @@ only), the materializer controls `derived_from` too, so it can expel
 members that do not belong in the fact's provenance. Return
 `merken.consolidation.materialize_fact(cluster)` as your fallback.
 
+### `Enricher` — write what retrieval will look for
+
+```python
+# merken/enrichment.py
+class Enricher(Protocol):
+    name: str
+    def enrich(self, text: str) -> str | None: ...
+```
+
+A reranker cannot reorder what retrieval never returns. When queries are
+phrased at category level ("what monitoring platform do we use?") and
+events at instance level ("Migrated from Prometheus/Thanos to
+Datadog…"), the fix is at write time: `Memory(enricher=...)` calls
+`enrich(text)` for every event the write policy kept and stores the
+returned line on top of it (`"» <line> «\n\n<text>"`), so FTS, the
+embedder, consolidation and the reranker all see it. `None` stores the
+event as is; an exception is logged and the raw text is stored (fail
+open). `RememberResult.enrichment` carries the stored line. The write
+decider's dedup hydration strips the line (`strip_enrichment`), so a
+re-submitted raw event is still a duplicate.
+
+`LLMEnricher` is the reference implementation: one line from any
+OpenAI-compatible endpoint, DeepSeek's `deepseek-flash` by default
+(thinking disabled; key from `api_key=`, `MERKEN_ENRICH_API_KEY` or
+`DEEPSEEK_API_KEY`). Give it a `gate` so the LLM is only paid for
+signal; `jev_decision_gate(client)` enriches only what Jev (hosted, or
+`JevClient.local()` for the keyless d1 model) labels DECISION:
+
+```python
+from merken import LLMEnricher, Memory, jev_decision_gate
+from merken.classifiers.jev import JevClient
+
+client = JevClient.local()
+mem = Memory(project="p", enricher=LLMEnricher(gate=jev_decision_gate(client)))
+```
+
 ### Reference implementation
 
 `merken.classifiers.jev` ships one of each on TypeSafe's Jev
