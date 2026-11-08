@@ -7,6 +7,20 @@ project's benchmark-driven development model.
 
 ## [Unreleased]
 
+### Added (2026-11-08) — write-time enrichment
+
+- **`merken.enrichment`**: `Memory(enricher=...)` stores one category-level
+  line on top of each written event (`» <line> «`), so category-phrased
+  queries reach instance-phrased events. `Enricher` protocol,
+  `LLMEnricher` (any OpenAI-compatible endpoint; DeepSeek `deepseek-flash`
+  by default, thinking off) and `jev_decision_gate` (enrich only what Jev or
+  local d1 labels DECISION). Off by default; fails open (an enricher error
+  stores the raw text). `RememberResult.enrichment` carries the line.
+  Dedup hydration, consolidation clustering and materializers read the raw
+  event (`strip_enrichment`); facts keep the line.
+  `knowledge_update_50topics`: R@5 46% → 80%, strict 76% → 86%, no strict
+  regression on nine other scenarios (`experiments/loop_quality/RESULTS.md`).
+
 ### Fixed
 
 - **`merken-mcp` crashed on import with the mcp 2.x SDK.** mcp 2.0 renamed
