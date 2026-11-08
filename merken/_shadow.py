@@ -137,7 +137,7 @@ def _build_classifier(kind: str, role: str):
     missing -> heuristic), so a calibrator misconfig would otherwise
     silently disable the whole classifier -- not what we want.
     """
-    if _TORCH_IMPORT_ERROR is not None and kind in _ENABLED_VALUES:
+    if _TORCH_IMPORT_ERROR is not None and kind in _TORCH_VALUES:
         raise RuntimeError(
             f"MERKEN_{role}={kind} requires torch, which failed to import: "
             f"{_TORCH_IMPORT_ERROR}"

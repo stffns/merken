@@ -71,3 +71,20 @@ def test_memory_falls_back_to_heuristic_without_torch(
 
     with Memory(project="t", db=tmp_path / "m.db") as mem:
         assert isinstance(mem._write_decider, HeuristicWriteDecider)
+
+
+def test_missing_torch_does_not_block_jev(no_torch, monkeypatch) -> None:
+    """jev needs no torch. A failed eager import (here triggered by
+    MERKEN_LABEL_LLM_MODEL) must not disable a jev shadow decider."""
+    from merken.classifiers.jev import JevWriteDecider
+
+    monkeypatch.delenv("MERKEN_PRIMARY", raising=False)
+    monkeypatch.delenv("MERKEN_JEV_LOCAL", raising=False)
+    monkeypatch.setenv("MERKEN_LABEL_LLM_MODEL", "x/y")
+    monkeypatch.setenv("MERKEN_SHADOW", "jev")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-dummy-key")
+
+    importlib.reload(merken._shadow)
+    assert merken._shadow._TORCH_IMPORT_ERROR is not None
+
+    assert isinstance(merken._shadow.load_shadow_from_env(), JevWriteDecider)
