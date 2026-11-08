@@ -1,7 +1,7 @@
 """Tests for the merken MCP server.
 
 The MCP transport (stdio, SSE, etc.) is handled by the official
-FastMCP SDK — we don't test that here. What we test is that:
+MCP Python SDK (``MCPServer``, mcp 2.x) — we don't test that here. What we test is that:
 
   1. Every tool is registered on the server with the expected name.
   2. Calling each tool function directly against a tmp_path DB
