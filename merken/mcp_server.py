@@ -38,7 +38,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from merken import (
     ForgetConsolidated,
@@ -48,7 +48,7 @@ from merken import (
 
 _DEFAULT_PROJECT = "default"
 
-mcp = FastMCP(
+mcp = MCPServer(
     "merken",
     instructions=(
         "merken is a decision-loop layer over vstash. Four primitives: "

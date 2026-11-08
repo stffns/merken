@@ -368,7 +368,7 @@ merken/
 ├── cli.py                 ← argparse CLI. Eight subcommands, each
 │                            a thin wrapper around a Memory method.
 │                            No business logic.
-├── mcp_server.py          ← FastMCP server. Same eight
+├── mcp_server.py          ← MCPServer (mcp 2.x). Same eight
 │                            primitives as the CLI, exposed as MCP
 │                            tools.
 └── policies/

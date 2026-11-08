@@ -15,7 +15,7 @@ which merken-mcp
 # /Users/you/.pyenv/shims/merken-mcp
 
 merken-mcp --help
-# FastMCP entry point — takes no args, speaks MCP over stdio
+# MCPServer (mcp 2.x) entry point — takes no args, speaks MCP over stdio
 ```
 
 Alternate invocation without the entry point:
@@ -427,11 +427,16 @@ each server's tools are namespaced so they coexist. Claude sees
 
 ## Testing the server
 
-The MCP stdio transport is tested by FastMCP itself, not by
-merken. merken's test suite imports each tool function directly
-and exercises it against a tmp_path DB — see
-`tests/test_mcp_server.py` for 22 tests that cover every tool,
-the config resolution chain, and the dedup/guardrail invariants.
+merken's test suite imports each tool function directly and
+exercises it against a tmp_path DB — see `tests/test_mcp_server.py`
+for 22 tests that cover every tool, the config resolution chain, and
+the dedup/guardrail invariants. `tests/test_mcp_stdio_e2e.py` spawns
+`python -m merken.mcp_server` and drives it over stdio with the SDK's
+`ClientSession` (initialize, list_tools, call_tool), so an SDK
+integration break shows up in the suite instead of in Claude Code.
+
+The server targets the mcp 2.x SDK (`mcp.server.mcpserver.MCPServer`;
+FastMCP was renamed in 2.0). The dependency is pinned `mcp>=2.0,<3`.
 
 Smoke test (start and signal):
 

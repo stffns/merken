@@ -24,7 +24,9 @@ classifiers = [
 dependencies = [
     "vstash>=0.25.0",
     "pydantic>=2",
-    "mcp>=1.0",
+    # mcp 2.0 renamed FastMCP to MCPServer (mcp.server.mcpserver), which
+    # mcp_server.py uses; 1.x lacks that module. Cap at the next major.
+    "mcp>=2.0,<3",
 ]
 
 [project.optional-dependencies]

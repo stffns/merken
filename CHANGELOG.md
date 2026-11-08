@@ -7,6 +7,15 @@ project's benchmark-driven development model.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`merken-mcp` crashed on import with the mcp 2.x SDK.** mcp 2.0 renamed
+  `FastMCP` to `MCPServer` and removed `mcp.server.fastmcp`; the open
+  `mcp>=1.0` range resolved to 2.x on any fresh install. `mcp_server.py`
+  now uses `mcp.server.mcpserver.MCPServer` and the range is
+  `mcp>=2.0,<3`. New `tests/test_mcp_stdio_e2e.py` spawns the server and
+  drives it over stdio, since the direct-call tests could not see the break.
+
 ### Empirical findings (2026-04-27)
 
 - **gpt-oss-120b is the dominant Builder lever for LoCoMo and LME (3-seed both benchmarks).**
