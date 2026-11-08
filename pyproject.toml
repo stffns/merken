@@ -24,7 +24,9 @@ classifiers = [
 dependencies = [
     "vstash>=0.25.0",
     "pydantic>=2",
-    "mcp>=1.0",
+    # mcp 2.0 removed mcp.server.fastmcp (renamed to MCPServer); merken-mcp
+    # is written against 1.x. Lift the cap when mcp_server.py is ported.
+    "mcp>=1.0,<2",
 ]
 
 [project.optional-dependencies]
