@@ -148,6 +148,59 @@ class GeminiLabelBackend:
         return _parse_backend_response(resp.text or "", self.name)
 
 
+class OpenAICompatLabelBackend:
+    """LLM label oracle over any OpenAI-compatible ``/chat/completions`` endpoint.
+
+    DeepSeek, vLLM, LM Studio, Ollama's OpenAI route, OpenAI itself. Standard library only
+    (no SDK dependency). ``extra_body`` is merged into the request, e.g.
+    ``{"thinking": {"type": "disabled"}}`` for DeepSeek, whose reasoning otherwise eats
+    the token budget. The key comes from ``api_key``, then ``MERKEN_LABEL_API_KEY``.
+    """
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        base_url: str,
+        api_key: str | None = None,
+        extra_body: dict | None = None,
+        timeout: float = 60.0,
+        max_tokens: int = 120,
+    ) -> None:
+        resolved_key = api_key or os.environ.get("MERKEN_LABEL_API_KEY")
+        if not resolved_key:
+            raise RuntimeError("OpenAICompatLabelBackend needs api_key= or MERKEN_LABEL_API_KEY.")
+        self._key = resolved_key
+        self._url = base_url.rstrip("/") + "/chat/completions"
+        self._extra = dict(extra_body or {})
+        self._timeout = timeout
+        self._max_tokens = max_tokens
+        self.name = model
+
+    def label(self, text: str) -> Label:
+        import urllib.request
+
+        body = {
+            "model": self.name,
+            "temperature": 0,
+            "max_tokens": self._max_tokens,
+            "messages": [{"role": "user", "content": _PROMPT.replace("{text}", text[:3000])}],
+            **self._extra,
+        }
+        req = urllib.request.Request(
+            self._url,
+            data=json.dumps(body).encode(),
+            headers={
+                "Authorization": f"Bearer {self._key}",
+                "Content-Type": "application/json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=self._timeout) as resp:  # noqa: S310
+            data = json.loads(resp.read())
+        raw = data["choices"][0]["message"].get("content") or ""
+        return _parse_backend_response(raw, self.name)
+
+
 class LocalLLMLabelBackend:
     """Offline label oracle via ``LLMWriteDecider`` under the hood.
 

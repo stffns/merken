@@ -35,6 +35,13 @@ dev = [
     "ruff>=0.5",
     "mypy>=1.10",
 ]
+d1 = [
+    "torch>=2.4",
+    "torchvision",
+    "pillow",
+    "transformers>=5.19",
+    "peft>=0.13",
+]
 
 [project.urls]
 Homepage = "https://github.com/stffns/merken"
