@@ -262,7 +262,7 @@ def default_anthropic_client(
     max_tokens: int = 4096,
     *,
     structured: bool = False,
-) -> "LLMClient | LLMStructuredClient":
+) -> LLMClient | LLMStructuredClient:
     """Build a client backed by the anthropic SDK.
 
     Lazy-imports anthropic so the module remains importable without
@@ -361,7 +361,7 @@ def default_gemini_client(
     *,
     structured: bool = True,
     timeout_s: float = 60.0,
-) -> "LLMStructuredClient | LLMClient":
+) -> LLMStructuredClient | LLMClient:
     """Build a Gemini-backed client. Defaults to structured-output mode.
 
     Lazy-imports google-genai so the module is importable without

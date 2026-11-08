@@ -11,7 +11,6 @@ from experiments.retrieval.longmemeval.runner import (
     _ADAPTERS,
     bootstrap_ci,
     eval_baseline,
-    eval_question,
     format_result,
 )
 

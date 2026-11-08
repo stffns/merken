@@ -18,7 +18,6 @@ from merken import (
     SemanticOnlyRecaller,
 )
 
-
 # --------------------------------------------------------------- pure policy
 
 

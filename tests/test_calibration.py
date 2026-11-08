@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -286,7 +285,12 @@ def test_shipped_head_produces_expected_outputs():
     cases = [
         # (p_raw, text, is_ood, description)
         (0.05, "Now let me check the thing.", False, "short filler"),
-        (0.80, "Fix: replaced X in db/pool.py line 42. p95 180ms -> 40ms.", False, "short concrete DEC"),
+        (
+            0.80,
+            "Fix: replaced X in db/pool.py line 42. p95 180ms -> 40ms.",
+            False,
+            "short concrete DEC",
+        ),
         (0.50, "| env | status |\n| dev | ok |\n| prod | ok |\n", False, "short markdown table"),
     ]
     # Compute expected outputs once from current shipped weights:
@@ -295,7 +299,7 @@ def test_shipped_head_produces_expected_outputs():
     # Round-trip assert: the exact same inputs produce the exact same
     # outputs. This catches any downstream bug that changes feature
     # extraction OR calibrate math under the hood.
-    for (p, t, ood, desc), want in zip(cases, expected):
+    for (p, t, ood, desc), want in zip(cases, expected, strict=True):
         got = head.calibrate(p, t, is_ood=ood)
         assert math.isclose(got, want, rel_tol=1e-9), (
             f"calibrate output changed for {desc!r}: was {want}, now {got}"

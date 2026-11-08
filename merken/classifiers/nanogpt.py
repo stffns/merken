@@ -213,7 +213,7 @@ class NanoGPTWriteDecider:
         *,
         confidence_threshold: float = 0.6,
         use_verb_markers: bool | None = None,
-        calibrator: "CalibrationHead | None" = None,
+        calibrator: CalibrationHead | None = None,
     ) -> None:
         """Create a NanoGPT write decider.
 

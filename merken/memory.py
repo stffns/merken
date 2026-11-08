@@ -650,9 +650,6 @@ class Memory:
                 collection=self.collection,
                 layer="semantic",
             )
-            existing_brief_titles = {
-                getattr(d, "title", "") for d in existing_briefs
-            }
             fp_tag = f"events_fp:{events_fingerprint}"
 
             # Check if any existing brief has this fingerprint
@@ -689,7 +686,7 @@ class Memory:
             from merken.consolidation import generate_briefs
             briefs = generate_briefs(events, synthesize_fn)
             facts_written = []
-            for i, brief in enumerate(briefs):
+            for brief in briefs:
                 # Each brief needs a unique fingerprint. Include brief
                 # content hash since all briefs share the same derived_from.
                 brief_hash = _hl.sha1(brief.encode("utf-8")).hexdigest()[:12]
