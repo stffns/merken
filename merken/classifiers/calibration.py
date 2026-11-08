@@ -111,7 +111,7 @@ class CalibrationHead:
     source: str = field(default="unknown")
 
     @classmethod
-    def from_json(cls, path: str | Path, *, source: str | None = None) -> "CalibrationHead":
+    def from_json(cls, path: str | Path, *, source: str | None = None) -> CalibrationHead:
         p = Path(path)
         data = json.loads(p.read_text())
         head = data.get("head") or data  # accept raw head dict too

@@ -12,7 +12,6 @@ by default.
 
 from __future__ import annotations
 
-import math
 import re
 
 import pytest
@@ -21,11 +20,9 @@ from merken.training.midloop_dataset import (
     Aligner,
     AlignmentResult,
     Case,
-    Region,
     diff_regions,
     tokenize,
 )
-
 
 # ----------------------------------------------------------------- dummy embed
 

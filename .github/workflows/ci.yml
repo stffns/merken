@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+      # The package and its tests. experiments/ and notes/ hold research scripts that are not
+      # held to the same bar. `ruff format --check` joins once the open PRs land (42 files would
+      # be reformatted today, and reformatting now would conflict with every one of them).
+      - run: uvx ruff check merken tests
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+      - run: uv sync --extra dev
+      # merken stores through vstash, which embeds with BGE-small. Cache it, and download it in a
+      # retrying step so a Hugging Face hiccup fails here with a clear error instead of timing
+      # out test after test (the same guard vstash's CI uses, #376 there).
+      - name: Cache embedding model
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/huggingface
+            ~/.cache/fastembed
+          key: embed-model-${{ runner.os }}-bge-small-en-v1.5
+      - name: Warm up embedding model
+        env:
+          HF_HUB_DOWNLOAD_TIMEOUT: "60"
+        run: |
+          for attempt in 1 2 3 4 5; do
+            uv run python -c "from vstash.embed import warmup; warmup('BAAI/bge-small-en-v1.5')" && exit 0
+            echo "::warning::embedding model warm-up attempt $attempt failed; retrying in $((attempt * 15))s"
+            sleep $((attempt * 15))
+          done
+          echo "::error::embedding model download failed after 5 attempts"
+          exit 1
+      - run: uv run pytest --tb=short -q

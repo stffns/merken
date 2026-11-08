@@ -16,7 +16,6 @@ from merken.training.case_generator import (
     _extract_json_array,
 )
 
-
 # ----------------------------------------------------------------- json extract
 
 def test_extract_clean_json_array() -> None:

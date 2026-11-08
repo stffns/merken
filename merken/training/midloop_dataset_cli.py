@@ -127,8 +127,8 @@ def cmd_align(args: argparse.Namespace) -> int:
     if args.no_embed:
         embed_fn = None
         print(
-            f"--no-embed: aligner will skip semantic filter; "
-            f"all divergent regions become interventions",
+            "--no-embed: aligner will skip semantic filter; "
+            "all divergent regions become interventions",
             file=sys.stderr,
         )
     else:
@@ -379,7 +379,7 @@ def cmd_build(args: argparse.Namespace) -> int:
     responses_path = out_dir / "responses.jsonl"
     aligned_path = out_dir / "aligned.jsonl"
 
-    print(f"=== Phase 1 build ===", file=sys.stderr)
+    print("=== Phase 1 build ===", file=sys.stderr)
     print(f"step 1/3: generate-cases -> {cases_path}", file=sys.stderr)
     args.input = args.protocols
     args.output = str(cases_path)

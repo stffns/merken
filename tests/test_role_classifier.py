@@ -8,8 +8,6 @@ canonical 3-seed numbers (macro-F1 0.929, SCR recall 100%).
 
 from __future__ import annotations
 
-from typing import Sequence
-
 import numpy as np
 import pytest
 

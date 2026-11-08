@@ -54,6 +54,9 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+# Style-only simplifications that would churn working code (nested ifs, try/except/pass,
+# if/else assignments); everything else in the selected sets is enforced in CI.
+ignore = ["SIM102", "SIM105", "SIM108"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

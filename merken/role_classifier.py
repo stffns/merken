@@ -67,10 +67,10 @@ Limitations
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
-from typing import Callable, Sequence
 
 import numpy as np
 
@@ -171,7 +171,7 @@ class RoleClassifier:
         self._proto_unit_by_role: dict[str, np.ndarray] | None = None  # lazy
 
     @classmethod
-    def default(cls, vstash_memory: object | None = None) -> "RoleClassifier":
+    def default(cls, vstash_memory: object | None = None) -> RoleClassifier:
         """Construct a classifier wired to vstash's default embedder.
 
         Parameters

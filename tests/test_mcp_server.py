@@ -18,6 +18,7 @@ from pathlib import Path
 from merken.mcp_server import (
     _resolve_db,
     _resolve_project,
+    mcp,
     merken_audit,
     merken_consolidate,
     merken_forget,
@@ -25,9 +26,7 @@ from merken.mcp_server import (
     merken_remember,
     merken_status,
     merken_tombstones,
-    mcp,
 )
-
 
 # ------------------------------------------------------------------- registry
 

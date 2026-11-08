@@ -23,8 +23,6 @@ from __future__ import annotations
 import json
 import time
 
-import pytest
-
 from merken.policies.midloop import (
     CognitiveState,
     HeuristicMidloopDecider,
@@ -40,7 +38,6 @@ from merken.policies.midloop import (
     format_midloop_audit_row,
     is_persistable_step,
 )
-
 
 # ----------------------------------------------------------------- helpers
 

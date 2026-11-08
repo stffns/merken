@@ -489,7 +489,8 @@ def test_consolidate_embedding_v1_clusters_paraphrased_events(tmp_path: Path) ->
             "The team picked postgres as the database for the new analytics service."
         )
         mem.remember(
-            "Postgres was the engine chosen to back the analytics service that the team is building."
+            "Postgres was the engine chosen to back the analytics service "
+            "that the team is building."
         )
         # And an unrelated distractor
         mem.remember(
