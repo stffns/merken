@@ -69,12 +69,30 @@ _LABEL_LLM_MODEL = os.environ.get("MERKEN_LABEL_LLM_MODEL", "").strip()
 # must happen before any other merken module that transitively imports
 # vstash (fastembed/ONNX). See notes/nanogpt-training-log.md
 # Mistake #10.
+#
+# The import is fail-open: torch is not a declared dependency, and an
+# opt-in classifier must never take ``import merken`` (and with it every
+# write) offline. A missing torch is recorded here and surfaced as a
+# RuntimeError from ``_build_classifier``, which ``Memory`` already
+# catches to fall back to the plain heuristic decider.
+_TORCH_IMPORT_ERROR: ImportError | None = None
 if (
     _SHADOW_KIND in _ENABLED_VALUES
     or _PRIMARY_KIND in _ENABLED_VALUES
     or _LABEL_LLM_MODEL
 ):
-    import torch  # noqa: F401
+    try:
+        import torch  # noqa: F401
+    except ImportError as e:
+        _TORCH_IMPORT_ERROR = e
+        import sys
+
+        print(
+            f"merken: torch is not importable ({e}); the MERKEN_SHADOW / "
+            "MERKEN_PRIMARY classifier is disabled and writes use the "
+            "heuristic decider.",
+            file=sys.stderr,
+        )
 
 
 def _resolve_calibrator(role: str):
@@ -114,6 +132,12 @@ def _build_classifier(kind: str, role: str):
     missing -> heuristic), so a calibrator misconfig would otherwise
     silently disable the whole classifier -- not what we want.
     """
+    if _TORCH_IMPORT_ERROR is not None and kind in _ENABLED_VALUES:
+        raise RuntimeError(
+            f"MERKEN_{role}={kind} requires torch, which failed to import: "
+            f"{_TORCH_IMPORT_ERROR}"
+        ) from _TORCH_IMPORT_ERROR
+
     if kind == "nanogpt":
         from merken.classifiers.nanogpt import NanoGPTWriteDecider
 

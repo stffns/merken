@@ -15,6 +15,13 @@ project's benchmark-driven development model.
   now uses `mcp.server.mcpserver.MCPServer` and the range is
   `mcp>=2.0,<3`. New `tests/test_mcp_stdio_e2e.py` spawns the server and
   drives it over stdio, since the direct-call tests could not see the break.
+- **`import merken` crashed when a classifier env var was set without torch.**
+  `merken._shadow` eagerly imports torch (load-order requirement) when
+  `MERKEN_SHADOW` / `MERKEN_PRIMARY` / `MERKEN_LABEL_LLM_MODEL` is set; torch
+  is not a declared dependency, so the `ModuleNotFoundError` escaped at
+  import time. The import is now fail-open: a warning goes to stderr,
+  `_build_classifier` raises `RuntimeError`, and `Memory` falls back to
+  `HeuristicWriteDecider` as documented.
 
 ### Empirical findings (2026-04-27)
 
